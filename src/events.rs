@@ -1,0 +1,118 @@
+use soroban_sdk::{contractevent, Address, BytesN, Env, Symbol};
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct Initialized {
+    #[topic]
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["admin_set"])]
+#[derive(Clone, Debug)]
+pub struct AdminChanged {
+    #[topic]
+    pub previous: Address,
+    pub new_admin: Address,
+}
+
+#[contractevent(topics = ["attestor_add"])]
+#[derive(Clone, Debug)]
+pub struct AttestorAdded {
+    #[topic]
+    pub attestor: Address,
+}
+
+#[contractevent(topics = ["attestor_del"])]
+#[derive(Clone, Debug)]
+pub struct AttestorRemoved {
+    #[topic]
+    pub attestor: Address,
+}
+
+#[contractevent(topics = ["attest"])]
+#[derive(Clone, Debug)]
+pub struct Attested {
+    #[topic]
+    pub subject: Address,
+    #[topic]
+    pub attestation_type: Symbol,
+    pub attestor: Address,
+    pub payload_hash: BytesN<32>,
+    pub expires_at: u64,
+}
+
+#[contractevent(topics = ["revoke"])]
+#[derive(Clone, Debug)]
+pub struct Revoked {
+    #[topic]
+    pub subject: Address,
+    #[topic]
+    pub attestation_type: Symbol,
+    pub revoked_by: Address,
+}
+
+#[contractevent(topics = ["pause"])]
+#[derive(Clone, Debug)]
+pub struct PauseToggled {
+    pub paused: bool,
+}
+
+pub fn initialized(env: &Env, admin: &Address) {
+    Initialized {
+        admin: admin.clone(),
+    }
+    .publish(env);
+}
+
+pub fn admin_changed(env: &Env, previous: &Address, new_admin: &Address) {
+    AdminChanged {
+        previous: previous.clone(),
+        new_admin: new_admin.clone(),
+    }
+    .publish(env);
+}
+
+pub fn attestor_added(env: &Env, attestor: &Address) {
+    AttestorAdded {
+        attestor: attestor.clone(),
+    }
+    .publish(env);
+}
+
+pub fn attestor_removed(env: &Env, attestor: &Address) {
+    AttestorRemoved {
+        attestor: attestor.clone(),
+    }
+    .publish(env);
+}
+
+pub fn attested(
+    env: &Env,
+    attestor: &Address,
+    subject: &Address,
+    attestation_type: &Symbol,
+    payload_hash: &BytesN<32>,
+    expires_at: u64,
+) {
+    Attested {
+        subject: subject.clone(),
+        attestation_type: attestation_type.clone(),
+        attestor: attestor.clone(),
+        payload_hash: payload_hash.clone(),
+        expires_at,
+    }
+    .publish(env);
+}
+
+pub fn revoked(env: &Env, subject: &Address, attestation_type: &Symbol, revoked_by: &Address) {
+    Revoked {
+        subject: subject.clone(),
+        attestation_type: attestation_type.clone(),
+        revoked_by: revoked_by.clone(),
+    }
+    .publish(env);
+}
+
+pub fn pause_toggled(env: &Env, paused: bool) {
+    PauseToggled { paused }.publish(env);
+}

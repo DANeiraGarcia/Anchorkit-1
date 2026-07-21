@@ -1,0 +1,32 @@
+#![no_std]
+
+mod contract;
+pub mod domain_validator;
+mod errors;
+mod events;
+pub mod hash;
+mod storage;
+mod types;
+
+pub use contract::{AnchorKitContract, AnchorKitContractClient};
+pub use errors::Error;
+pub use hash::{compute_payload_hash, verify_payload_hash};
+pub use types::{Attestation, AttestationStatus};
+
+#[cfg(test)]
+mod test_util;
+
+#[cfg(test)]
+mod admin_tests;
+
+#[cfg(test)]
+mod attestor_tests;
+
+#[cfg(test)]
+mod attest_tests;
+
+#[cfg(test)]
+mod revoke_tests;
+
+#[cfg(test)]
+mod pause_tests;
