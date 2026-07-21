@@ -30,6 +30,7 @@ than stubbed out in-tree.
 | `pause()` / `unpause()` / `is_paused()` | Admin circuit breaker; blocks `attest`/`revoke` while active, reads still work. |
 | `add_attestor(attestor)` / `remove_attestor(attestor)` / `is_attestor(attestor)` | Admin-managed allow-list of addresses permitted to attest. |
 | `attest(attestor, subject, attestation_type, payload_hash, ttl_seconds)` | Anchors a sha256 payload hash on-chain for `subject` under `attestation_type`. Requires `attestor` to be allow-listed and to authorize the call. |
+| `attest_batch(attestor, entries)` | Anchors multiple attestations from one attestor in a single call; each entry is a `(subject, attestation_type, payload_hash, ttl_seconds)` tuple. Atomic — one invalid entry fails the whole batch — and emits one `Attested` event per entry, same as `attest`. See "Batch attestation gas amortization" below for when it's worth using. |
 | `get_attestation(subject, attestation_type)` | Fetches a stored attestation, or `AttestationNotFound`. |
 | `is_valid(subject, attestation_type)` | `true` iff an attestation exists, is active, and hasn't expired. |
 | `revoke(caller, subject, attestation_type)` | Revokes an attestation; `caller` must be the admin or the original attestor. |
@@ -38,6 +39,43 @@ than stubbed out in-tree.
 Supporting modules:
 - `hash` — `compute_payload_hash` / `verify_payload_hash`, thin wrappers over the host's sha256.
 - `domain_validator` — syntactic validation of anchor domain strings (the kind of hostname an attestor would publish a `stellar.toml` under).
+
+## Batch attestation gas amortization
+
+`attest` pays a fixed per-call cost (auth check, allow-list lookup, pause
+check) on top of the variable cost of writing one attestation.
+`attest_batch` pays that fixed cost once per call no matter how many entries
+it carries, so its per-entry cost drops as the batch grows. Measured with
+`soroban_sdk`'s CPU instruction metering (`src/batch_gas_benchmark.rs`,
+`cargo test batch_gas_benchmark -- --nocapture`):
+
+| Batch size | CPU / entry, individual `attest` | CPU / entry, `attest_batch` | Savings |
+|---:|---:|---:|---:|
+| 1  | 153,249 | 155,785 | -1.7% (batching overhead costs more than there is to amortize) |
+| 2  | 157,664 | 117,415 | 25.5% |
+| 5  | 163,453 |  95,316 | 41.7% |
+| 10 | 172,847 |  91,813 | 46.9% |
+| 20 | 186,799 |  95,535 | 48.9% |
+| 40 | 212,585 | 107,091 | 49.6% |
+
+Savings climb fast up to a batch of ~10 (46.9%) and then flatten out,
+approaching but never reaching 50% — that's the fixed-cost share of a single
+`attest` call. Batching more than ~10-20 entries at once buys very little
+extra per-entry savings.
+
+**Hard ceiling, not just a cost curve:** each attestation occupies two
+ledger footprint slots (its data entry and its TTL/rent entry), and Soroban
+caps total footprint entries per invocation (100 under the test host's
+mainnet-equivalent default). That puts a hard wall on batch size regardless
+of gas budget: **47 entries succeeds, 48 fails** with a host-level
+`"total footprint ledger entries: 102 > 100"` trap that `attest_batch`
+can't turn into a graceful `Error` — it's enforced by the host below the
+contract. Real transactions carry additional footprint of their own (fee
+bump, source account, etc.), so treat 47 as an optimistic upper bound, not
+a safe one; callers should batch in chunks well under it (the ~10-20 range
+above captures nearly all the gas savings anyway). See
+`batch_gas_benchmark::attest_batch_stays_under_the_ledger_write_ceiling` and
+`batch_gas_benchmark::batch_amortizes_fixed_overhead`.
 
 ## Building and testing
 

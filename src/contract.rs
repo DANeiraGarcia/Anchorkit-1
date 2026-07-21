@@ -1,9 +1,9 @@
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Symbol, Vec};
 
 use crate::errors::Error;
 use crate::events;
 use crate::storage;
-use crate::types::{Attestation, AttestationStatus};
+use crate::types::{Attestation, AttestationStatus, BatchAttestEntry};
 
 #[contract]
 pub struct AnchorKitContract;
@@ -110,6 +110,72 @@ impl AnchorKitContract {
         if !storage::is_attestor(&env, &attestor) {
             return Err(Error::AttestorNotRegistered);
         }
+        Self::record_attestation(
+            &env,
+            &attestor,
+            &subject,
+            &attestation_type,
+            &payload_hash,
+            ttl_seconds,
+        )
+    }
+
+    /// Anchors multiple attestations from a single attestor in one call.
+    /// Same authorization and allow-list rules as `attest`; every entry is
+    /// attributed to `attestor`. Entries are validated before any are
+    /// written, so one invalid entry (e.g. a zero TTL) fails the whole
+    /// batch and leaves storage untouched, matching `attest`'s per-entry
+    /// semantics -- including one `Attested` event per entry.
+    ///
+    /// Batching amortizes the fixed per-call overhead (auth check,
+    /// allow-list lookup, pause check) across every entry; see
+    /// `batch_gas_benchmark::batch_amortizes_fixed_overhead` for measured
+    /// per-entry cost across a range of batch sizes, and the README's
+    /// "Batch attestation gas amortization" section for the summary.
+    pub fn attest_batch(
+        env: Env,
+        attestor: Address,
+        entries: Vec<BatchAttestEntry>,
+    ) -> Result<(), Error> {
+        if storage::is_paused(&env) {
+            return Err(Error::ContractPaused);
+        }
+        attestor.require_auth();
+        if !storage::is_attestor(&env, &attestor) {
+            return Err(Error::AttestorNotRegistered);
+        }
+        if entries.is_empty() {
+            return Err(Error::EmptyBatch);
+        }
+        for entry in entries.iter() {
+            if entry.ttl_seconds == 0 {
+                return Err(Error::InvalidExpiration);
+            }
+        }
+
+        for entry in entries.iter() {
+            Self::record_attestation(
+                &env,
+                &attestor,
+                &entry.subject,
+                &entry.attestation_type,
+                &entry.payload_hash,
+                entry.ttl_seconds,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Shared by `attest` and `attest_batch`: validates the TTL, writes the
+    /// attestation, bumps the running count, and emits `Attested`.
+    fn record_attestation(
+        env: &Env,
+        attestor: &Address,
+        subject: &Address,
+        attestation_type: &Symbol,
+        payload_hash: &BytesN<32>,
+        ttl_seconds: u64,
+    ) -> Result<(), Error> {
         if ttl_seconds == 0 {
             return Err(Error::InvalidExpiration);
         }
@@ -127,14 +193,14 @@ impl AnchorKitContract {
             status: AttestationStatus::Active,
         };
 
-        storage::set_attestation(&env, &subject, &attestation_type, &attestation);
-        storage::bump_attestation_count(&env);
+        storage::set_attestation(env, subject, attestation_type, &attestation);
+        storage::bump_attestation_count(env);
         events::attested(
-            &env,
-            &attestor,
-            &subject,
-            &attestation_type,
-            &payload_hash,
+            env,
+            attestor,
+            subject,
+            attestation_type,
+            payload_hash,
             expires_at,
         );
         Ok(())

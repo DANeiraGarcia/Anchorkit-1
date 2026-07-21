@@ -26,6 +26,12 @@ mod attestor_tests;
 mod attest_tests;
 
 #[cfg(test)]
+mod attest_batch_tests;
+
+#[cfg(test)]
+mod batch_gas_benchmark;
+
+#[cfg(test)]
 mod revoke_tests;
 
 #[cfg(test)]
