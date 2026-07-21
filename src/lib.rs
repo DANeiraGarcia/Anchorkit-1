@@ -30,3 +30,6 @@ mod revoke_tests;
 
 #[cfg(test)]
 mod pause_tests;
+
+#[cfg(all(test, feature = "stress-tests"))]
+mod attestor_stress_tests;

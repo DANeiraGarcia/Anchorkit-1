@@ -7,6 +7,12 @@ license = "MIT"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Gates the allow-list stress benchmark (see src/attestor_stress_tests.rs) so
+# it doesn't run as part of a normal `cargo test`. Enable it explicitly with:
+#   cargo test --release --features stress-tests allow_list_scaling -- --nocapture
+stress-tests = []
+
 [dependencies]
 soroban-sdk = "26.1.0"
 ed25519-dalek = { version = "2", default-features = false }
