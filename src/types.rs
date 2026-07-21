@@ -25,6 +25,17 @@ pub enum AttestationStatus {
     Revoked,
 }
 
+/// One entry of an `attest_batch` call: everything about an individual
+/// attestation except the attestor, which is shared by the whole batch.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchAttestEntry {
+    pub subject: Address,
+    pub attestation_type: Symbol,
+    pub payload_hash: BytesN<32>,
+    pub ttl_seconds: u64,
+}
+
 /// A single off-chain attestation anchored on-chain.
 ///
 /// `payload_hash` is a sha256 digest of the off-chain payload the attestor

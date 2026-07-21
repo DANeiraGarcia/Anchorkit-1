@@ -16,4 +16,5 @@ pub enum Error {
     AttestationAlreadyRevoked = 9,
     InvalidExpiration = 10,
     InvalidDomain = 11,
+    EmptyBatch = 12,
 }
