@@ -60,13 +60,17 @@
 pub mod dead_letter;
 pub mod delivery;
 pub mod errors;
+pub mod idempotency;
 pub mod monitor;
+pub mod processor;
 pub mod retry;
 pub mod types;
 
 pub use dead_letter::DeadLetterQueue;
 pub use delivery::WebhookDeliverer;
 pub use errors::{Result, WebhookError};
+pub use idempotency::{derive_idempotency_key, IdempotencyStore};
 pub use monitor::WebhookMonitor;
+pub use processor::{IdempotentWebhookProcessor, ProcessingResult};
 pub use retry::RetryConfig;
 pub use types::{DeadLetter, WebhookDelivery};
