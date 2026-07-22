@@ -88,6 +88,10 @@ rustup target add wasm32v1-none
 cargo build --target wasm32v1-none --release
 ```
 
+## Documentation
+
+- [Revocation notification design](docs/revocation-notification-design.md) — proposed payload and delivery semantics for notifying subscribers when an attestation should be revoked.
+
 ## Roadmap
 
 The gap between this ~50%-built core and a complete toolkit is tracked as
