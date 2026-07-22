@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "webhook-sdk"]
+resolver = "2"
+
 [package]
 name = "anchorkit"
 version = "0.1.0"
