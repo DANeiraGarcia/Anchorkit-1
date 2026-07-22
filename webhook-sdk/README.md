@@ -6,9 +6,10 @@ This module provides webhook delivery for AnchorKit with automatic retry-with-ba
 
 - **Retry-with-Backoff**: Automatic exponential backoff for failed webhook deliveries using the `RetryConfig` helper
 - **Dead-Letter Queue**: Failed deliveries that exhaust retries are stored in an inspectable dead-letter queue
+- **Idempotent Processing**: Duplicate webhook deliveries are detected via stable idempotency keys and handled without re-executing side effects
 - **Webhook Monitor**: Tool to inspect and query dead-lettered deliveries
 - **Async/Await**: Built on Tokio for efficient async operations
-- **SQLite Storage**: Persistent storage for dead-letter entries
+- **SQLite Storage**: Persistent storage for dead-letter entries and idempotency records
 
 ## Architecture
 
@@ -23,6 +24,16 @@ This module provides webhook delivery for AnchorKit with automatic retry-with-ba
   - Sends payloads to registered webhook endpoints
   - Integrates with retry logic
   - Tracks delivery attempts and errors
+
+- **`idempotency.rs`**: Idempotency key derivation and storage
+  - Derives stable SHA256-based keys from webhook payloads
+  - Stores processed deliveries for duplicate detection
+  - Converts at-least-once to exactly-once semantics
+
+- **`processor.rs`**: Idempotent webhook processor
+  - Combines delivery with idempotency checking
+  - Returns cached responses for duplicates without re-executing
+  - Prevents double-triggering of side effects
 
 - **`dead_letter.rs`**: Dead-letter queue storage backend
   - SQLite-based persistent storage
@@ -130,11 +141,50 @@ let count = monitor.dead_letter_count().await.unwrap();
 let report = monitor.generate_report().await.unwrap();
 ```
 
+### Idempotent Processing
+
+Ensures at-most-once execution of side effects by detecting and handling duplicate deliveries:
+
+```rust
+use webhook_sdk::{IdempotentWebhookProcessor, IdempotencyStore, WebhookDeliverer};
+
+let pool = SqlitePool::connect("sqlite://webhooks.db").await?;
+let idempotency_store = IdempotencyStore::new(pool);
+idempotency_store.initialize().await?;
+
+let deliverer = WebhookDeliverer::new(RetryConfig::default());
+let processor = IdempotentWebhookProcessor::new(deliverer, idempotency_store);
+
+// First delivery
+let delivery1 = WebhookDelivery::new(url1, payload.clone());
+let result1 = processor.process(delivery1).await?;
+println!("First: duplicate={}", result1.is_duplicate); // false
+
+// Duplicate delivery with same payload
+let delivery2 = WebhookDelivery::new(url2, payload);
+let result2 = processor.process(delivery2).await?;
+println!("Second: duplicate={}", result2.is_duplicate); // true
+// Returns cached response without re-executing side effect
+```
+
+#### How It Works
+
+1. **Stable Key Derivation**: SHA256 hash of the payload produces deterministic idempotency key
+2. **Duplicate Detection**: First delivery records idempotency key and response
+3. **Cached Response**: Subsequent deliveries with same payload return cached response
+4. **No Side Effect Re-execution**: Duplicate deliveries skip the webhook POST and return immediately
+
 ## Acceptance Criteria (Issue #119)
 
 - ✅ Reuses the existing `retry_with_backoff` helper (implemented as `RetryConfig`)
 - ✅ Dead-lettered deliveries are inspectable via the webhook monitor tool
 - ✅ Tests cover a delivery exhausting retries and landing in the dead-letter path
+
+## Acceptance Criteria (Issue #120)
+
+- ✅ Uses stable idempotency key derived from webhook payload (SHA256)
+- ✅ Duplicate delivery detected and no-op response returned without re-executing side effect
+- ✅ Tests cover same delivery arriving twice with only one on-chain action resulting
 
 ## Testing
 
@@ -148,7 +198,9 @@ Key test coverage:
 - `test_delivery_exhausts_retries_and_lands_in_dead_letter` - Verifies failed deliveries reach dead-letter queue
 - `test_dead_letter_storage_and_retrieval` - Confirms dead-letter persistence and querying
 - `test_dead_letter_inspection_via_monitor` - Validates monitor inspection capabilities
-- `test_dead_letter_retrieval_by_id` - Tests specific dead-letter lookup
+- `test_same_delivery_twice_only_triggers_once` - Verifies idempotent processing prevents duplicate execution
+- `test_idempotency_key_derives_from_payload` - Confirms stable key derivation
+- `test_duplicate_delivery_returns_cached_response` - Validates duplicate detection and caching
 
 ## Database Schema
 
