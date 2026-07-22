@@ -10,8 +10,8 @@ off-chain decision to the contract. Any other contract or client can then
 check on-chain whether that fingerprint is present, active, and unexpired,
 without the anchor ever having to store or expose the underlying payload.
 
-## Status: core contract only, ~50% of the planned surface
-
+## Status: core contract only
+ 
 This repository currently implements the **on-chain Soroban contract** —
 attestation lifecycle, attestor allow-listing, admin control, pause/circuit
 breaker, and payload hashing — with a full unit test suite. It intentionally
