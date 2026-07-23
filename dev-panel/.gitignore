@@ -1,0 +1,9 @@
+node_modules
+dist
+.turbo
+*.tsbuildinfo
+.storybook
+storybook-static
+.env
+.env.local
+.DS_Store
