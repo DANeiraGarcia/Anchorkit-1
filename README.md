@@ -119,6 +119,7 @@ full analysis and follow-up issue (#WIN-1).
 ## Documentation
 
 - [Revocation notification design](docs/revocation-notification-design.md) — proposed payload and delivery semantics for notifying subscribers when an attestation should be revoked.
+- [Contract wasm size](docs/wasm-size.md) — before/after size profiling and what `strip = true` and dropping an unused dependency bought us.
 
 ## Roadmap
 
