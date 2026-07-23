@@ -88,10 +88,10 @@ There are two version floors in play:
 
 Running `rustup update` (which gives you current stable, well above both) is the simplest path. A `rust-toolchain.toml` at the repo root pins the channel to `stable` and auto-installs the `wasm32v1-none` target via `rustup`.
 
-Verified on:
+Verified on (CI matrix, `.github/workflows/ci.yml`, runs on every push/PR to `main`):
 - Linux (ubuntu-latest, Rust stable ≥ 1.84) — full build + test suite ✅
 - macOS (macos-latest, Rust stable ≥ 1.84) — full build + test suite ✅
-- Windows 11 (x86_64-pc-windows-gnu, Rust 1.95) — WASM build ✅ / `cargo test` ❌ see note below
+- Windows (windows-latest, `x86_64-pc-windows-msvc`, Rust stable ≥ 1.84) — full build + test suite ✅
 
 ### Commands
 
@@ -100,7 +100,7 @@ Verified on:
 # (rust-toolchain.toml handles this automatically)
 rustup target add wasm32v1-none
 
-# Run the unit test suite (native target — Linux / macOS)
+# Run the unit test suite
 cargo test
 
 # Build the deployable contract
@@ -109,12 +109,15 @@ cargo build --target wasm32v1-none --release
 
 ### Windows note
 
-`cargo test` fails on the `x86_64-pc-windows-gnu` toolchain with
-`ld: error: export ordinal too large` because the soroban-sdk test harness
-generates more DLL exports than the PE/COFF format allows. The WASM contract
-build (`--target wasm32v1-none`) is unaffected. Run the test suite on Linux,
-macOS, or WSL. See [`docs/platform-quirks.md`](docs/platform-quirks.md) for the
-full analysis and follow-up issue (#WIN-1).
+`cargo test` passes on Windows in CI (`windows-latest`'s default
+`x86_64-pc-windows-msvc` toolchain). A local Windows install using the
+`x86_64-pc-windows-gnu`/MinGW toolchain instead will hit
+`ld: error: export ordinal too large`, because the soroban-sdk test harness
+generates more DLL exports than the PE/COFF format allows under that linker —
+this is specific to the GNU toolchain, not Windows generally. Switch to the
+MSVC toolchain or run the test suite on Linux/macOS/WSL instead. See
+[`docs/platform-quirks.md`](docs/platform-quirks.md) for the full analysis
+(#WIN-1).
 
 ## Documentation
 
