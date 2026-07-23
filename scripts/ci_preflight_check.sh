@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Minimum required Rust version
-MIN_RUST_VERSION="1.75.0"
+# Minimum required Rust version.
+# - wasm32v1-none target support: requires Rust >= 1.84
+# - soroban-spec-rust 26.1.1 (transitive dep): requires Rust >= 1.91
+# The effective floor is therefore 1.84 for the *target* but 1.91 for a
+# full build with current dependencies.  We enforce 1.84 here so the check
+# stays aligned with the documented requirement; the build itself will fail
+# with a clear Cargo error if the dep floor is not met.
+# Verified builds: Linux ubuntu-latest (stable), Windows 11/x86_64-pc-windows-gnu/Rust 1.95.
+MIN_RUST_VERSION="1.84.0"
 
 echo "==> Running CI Preflight Check..."
 

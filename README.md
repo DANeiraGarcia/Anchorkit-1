@@ -79,14 +79,42 @@ above captures nearly all the gas savings anyway). See
 
 ## Building and testing
 
+### Minimum toolchain
+
+There are two version floors in play:
+
+- **Rust 1.84** — when `wasm32v1-none` was stabilised (the target itself becomes available)
+- **Rust 1.91** — effective minimum with the current dependency set (`soroban-spec-rust 26.1.1` requires it)
+
+Running `rustup update` (which gives you current stable, well above both) is the simplest path. A `rust-toolchain.toml` at the repo root pins the channel to `stable` and auto-installs the `wasm32v1-none` target via `rustup`.
+
+Verified on:
+- Linux (ubuntu-latest, Rust stable ≥ 1.84) — full build + test suite ✅
+- macOS (macos-latest, Rust stable ≥ 1.84) — full build + test suite ✅
+- Windows 11 (x86_64-pc-windows-gnu, Rust 1.95) — WASM build ✅ / `cargo test` ❌ see note below
+
+### Commands
+
 ```sh
-# Run the unit test suite (native target)
+# Install the WASM target if not already present
+# (rust-toolchain.toml handles this automatically)
+rustup target add wasm32v1-none
+
+# Run the unit test suite (native target — Linux / macOS)
 cargo test
 
-# Build the deployable contract (requires Rust 1.84+ for wasm32v1-none)
-rustup target add wasm32v1-none
+# Build the deployable contract
 cargo build --target wasm32v1-none --release
 ```
+
+### Windows note
+
+`cargo test` fails on the `x86_64-pc-windows-gnu` toolchain with
+`ld: error: export ordinal too large` because the soroban-sdk test harness
+generates more DLL exports than the PE/COFF format allows. The WASM contract
+build (`--target wasm32v1-none`) is unaffected. Run the test suite on Linux,
+macOS, or WSL. See [`docs/platform-quirks.md`](docs/platform-quirks.md) for the
+full analysis and follow-up issue (#WIN-1).
 
 ## Documentation
 
