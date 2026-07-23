@@ -8,21 +8,43 @@ on:
 
 jobs:
   preflight-and-test:
-    name: Preflight & Test Suite
-    runs-on: ubuntu-latest
+    name: Preflight & Test Suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # rust-toolchain.toml (channel = "stable") is picked up automatically,
+      # but we list targets explicitly here so the action installs them
+      # even on runners where rustup home may differ.
       - name: Install Rust toolchain with WASM target
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32v1-none
 
+      # The preflight script is a bash script; on Windows the GitHub-hosted
+      # runner provides Git Bash so this works across all three platforms.
       - name: Run CI Preflight Check
+        shell: bash
         run: |
           chmod +x ./scripts/ci_preflight_check.sh
           ./scripts/ci_preflight_check.sh
 
-      - name: Run Cargo Tests
+      # NOTE (Windows / x86_64-pc-windows-gnu): cargo test fails on the gnu
+      # toolchain with "export ordinal too large" because the soroban-sdk test
+      # harness pulls in enough symbols to overflow the PE ordinal table.
+      # Workaround: skip the native test step on Windows and rely on the
+      # Linux/macOS runners for test coverage.  The WASM build (below) is
+      # unaffected and still validates the contract on all platforms.
+      # Tracked in: docs/platform-quirks.md
+      - name: Run Cargo Tests (Linux / macOS only)
+        if: runner.os != 'Windows'
         run: cargo test
+
+      - name: Build deployable contract (wasm32v1-none)
+        run: cargo build --target wasm32v1-none --release

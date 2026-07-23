@@ -1,0 +1,7 @@
+[toolchain]
+# Use stable Rust.  The wasm32v1-none target was stabilised in 1.84,
+# but the current dependency set (soroban-spec-rust 26.1.1) requires
+# rustc >= 1.91.  "stable" always satisfies both constraints.
+# To pin an exact version, change this to e.g. channel = "1.91".
+channel = "stable"
+targets  = ["wasm32v1-none"]
