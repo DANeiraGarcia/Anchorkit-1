@@ -109,6 +109,25 @@ fn is_valid_false_after_expiry() {
 }
 
 #[test]
+fn is_valid_false_exactly_at_expires_at() {
+    let s = setup();
+    let attestor = Address::generate(&s.env);
+    let subject = Address::generate(&s.env);
+    s.client.add_attestor(&attestor);
+
+    let kind = Symbol::new(&s.env, "payment_confirmed");
+    let hash = compute_payload_hash(&s.env, &Bytes::from_slice(&s.env, b"payload"));
+    s.client.attest(&attestor, &subject, &kind, &hash, &ONE_DAY);
+
+    // expires_at is exclusive: at the exact expiry timestamp the
+    // attestation must already read as invalid, not one second later.
+    let stored = s.client.get_attestation(&subject, &kind);
+    s.env.ledger().set_timestamp(stored.expires_at);
+
+    assert!(!s.client.is_valid(&subject, &kind));
+}
+
+#[test]
 fn a_new_attest_call_overwrites_the_prior_attestation_for_the_same_type() {
     let s = setup();
     let attestor = Address::generate(&s.env);
