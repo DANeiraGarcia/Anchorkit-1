@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AnchorKit · Status Monitor</title>
+<!--
+  AnchorKit status-monitor dashboard.
+
+  A single self-contained file: no external scripts, stylesheets, fonts, or
+  analytics. It polls the discovery/health-score module's JSON endpoint and
+  visualises each anchor's health score over time.
+
+  Security posture (see observability/README.md for the full contract):
+    * No secret is ever embedded in this file, requested from the user, or
+      rendered. Authentication to the health endpoint is expected to be handled
+      by the browser session (same-origin cookie) — the dashboard sends
+      `credentials: "same-origin"` and never carries an API key or JWT itself.
+    * Any field that looks like a credential is redacted before render as a
+      defence-in-depth measure (see SENSITIVE_KEY_RE / redact()).
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --page:            #f9f9f7;
+    --surface-1:       #fcfcfb;
+    --surface-2:       #f3f2ee;
+    --text-primary:    #0b0b0b;
+    --text-secondary:  #52514e;
+    --text-muted:      #898781;
+    --grid:            #e1e0d9;
+    --baseline:        #c3c2b7;
+    --border:          rgba(11,11,11,0.10);
+    /* status palette (fixed, never themed) */
+    --good:            #0ca30c;
+    --warning:         #fab219;
+    --serious:         #ec835a;
+    --critical:        #d03b3b;
+    --good-text:       #006300;
+    /* categorical series slots (light) */
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --series-4: #eda100;
+    --series-5: #e87ba4;
+    --series-6: #008300;
+    --series-7: #4a3aa7;
+    --series-8: #e34948;
+    --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface-1:      #1a1a19;
+      --surface-2:      #232321;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --good-text:      #0ca30c;
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+      --series-4: #c98500;
+      --series-5: #d55181;
+      --series-6: #008300;
+      --series-7: #9085e9;
+      --series-8: #e66767;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:           #0d0d0d;
+    --surface-1:      #1a1a19;
+    --surface-2:      #232321;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --good-text:      #0ca30c;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+    --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 24px 20px 64px; }
+
+  header.app { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px 24px; margin-bottom: 20px; }
+  header.app h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  header.app .sub { color: var(--text-secondary); font-size: 13px; margin-top: 2px; }
+  .spacer { flex: 1 1 auto; }
+
+  /* connection pill */
+  .conn { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500;
+          padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-1); }
+  .conn .led { width: 9px; height: 9px; border-radius: 50%; background: var(--text-muted); flex: none; }
+  .conn.live .led { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 22%, transparent); }
+  .conn.stale .led { background: var(--warning); }
+  .conn.down  .led { background: var(--critical); }
+  .conn .when { color: var(--text-muted); font-weight: 400; }
+
+  /* controls */
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 20px;
+              padding: 12px 14px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; }
+  .controls label { color: var(--text-secondary); font-size: 12px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
+  .controls input[type=url], .controls input[type=number] {
+    font: inherit; font-size: 13px; color: var(--text-primary); background: var(--page);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; }
+  .controls input[type=url] { min-width: 260px; flex: 1 1 260px; }
+  .controls input[type=number] { width: 64px; }
+  button { font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--text-primary);
+           background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; }
+  button:hover { background: color-mix(in srgb, var(--surface-2) 82%, var(--text-primary)); }
+  button.primary { background: var(--series-1); border-color: transparent; color: #fff; }
+  button.primary:hover { filter: brightness(1.06); }
+  button[aria-pressed=true] { outline: 2px solid var(--series-1); outline-offset: 1px; }
+
+  /* summary tiles */
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .tile .k { font-size: 12px; color: var(--text-secondary); font-weight: 500; }
+  .tile .v { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; margin-top: 2px; }
+  .tile .v.small { font-size: 22px; }
+  .tile.accent .v { color: var(--series-1); }
+
+  /* card grid + chart panel */
+  .panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 20px; }
+  .panel h2 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+  .panel .h-sub { color: var(--text-secondary); font-size: 12px; margin-bottom: 12px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; }
+  .legend .item { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-secondary); }
+  .legend .swatch { width: 18px; height: 3px; border-radius: 2px; flex: none; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 15px 16px; position: relative; }
+  .card.unreachable { opacity: 0.92; }
+  .card .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .card .domain { font-size: 13px; font-weight: 600; word-break: break-all; }
+  .card .score { font-size: 40px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; margin: 8px 0 2px; }
+  .card .score .unit { font-size: 15px; color: var(--text-muted); font-weight: 500; }
+  .card .meta { color: var(--text-muted); font-size: 12px; }
+  .card .checks { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
+           padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+  .badge .ico { width: 12px; height: 12px; }
+  .badge.healthy   { color: var(--good-text);   background: color-mix(in srgb, var(--good) 12%, transparent); }
+  .badge.degraded  { color: #7a5600;            background: color-mix(in srgb, var(--warning) 20%, transparent); }
+  .badge.unhealthy { color: var(--critical);    background: color-mix(in srgb, var(--critical) 12%, transparent); }
+  .badge.unreachable { color: var(--text-secondary); background: var(--surface-2); }
+  :root[data-theme="dark"] .badge.degraded,
+  :root:where(:not([data-theme="light"])) .badge.degraded { color: var(--warning); }
+
+  .chip { font-size: 11px; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--border);
+          color: var(--text-secondary); display: inline-flex; align-items: center; gap: 4px; }
+  .chip .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .chip .dot.pass { background: var(--good); }
+  .chip .dot.warn { background: var(--warning); }
+  .chip .dot.fail { background: var(--critical); }
+  .chip .dot.unknown { background: var(--text-muted); }
+
+  .stale-flag { position: absolute; top: 12px; right: 14px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+                text-transform: uppercase; color: var(--warning); }
+
+  .sparkline { margin-top: 12px; }
+
+  /* banner */
+  .banner { display: none; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px; margin-bottom: 16px;
+            font-size: 13px; border: 1px solid var(--border); }
+  .banner.show { display: flex; }
+  .banner.err  { background: color-mix(in srgb, var(--critical) 12%, transparent); color: var(--critical); border-color: color-mix(in srgb, var(--critical) 40%, transparent); }
+  .banner.warn { background: color-mix(in srgb, var(--warning) 16%, transparent); color: #7a5600; border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+  :root[data-theme="dark"] .banner.warn,
+  :root:where(:not([data-theme="light"])) .banner.warn { color: var(--warning); }
+
+  /* table view */
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table caption { text-align: left; color: var(--text-secondary); font-size: 12px; margin-bottom: 8px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  th { color: var(--text-secondary); font-weight: 600; }
+  [hidden] { display: none !important; }
+
+  svg text { font-family: var(--font); }
+  a { color: var(--series-1); }
+  .visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="app">
+    <div>
+      <h1>Anchor Status Monitor</h1>
+      <div class="sub">Live health scores from the discovery module, trended over time.</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="conn" id="conn" role="status" aria-live="polite">
+      <span class="led"></span><span id="conn-label">Connecting…</span>
+      <span class="when" id="conn-when"></span>
+    </div>
+  </header>
+
+  <div class="controls">
+    <label>Endpoint
+      <input type="url" id="endpoint" spellcheck="false" autocomplete="off"
+             placeholder="/health/anchors  (relative, same-origin)">
+    </label>
+    <label>Poll (s)
+      <input type="number" id="interval" min="2" max="600" step="1" value="15">
+    </label>
+    <button class="primary" id="refresh" type="button">Refresh now</button>
+    <button id="pause" type="button" aria-pressed="false">Pause</button>
+    <button id="demo" type="button" aria-pressed="false" title="Generate synthetic data locally — no network">Demo data</button>
+    <button id="view" type="button" aria-pressed="false">Table view</button>
+    <button id="theme" type="button">Theme</button>
+  </div>
+
+  <div class="banner" id="banner" role="alert"></div>
+
+  <section class="summary" id="summary" aria-label="Fleet summary"></section>
+
+  <!-- Trend chart: score over time, one line per anchor -->
+  <section class="panel" id="chart-panel">
+    <h2>Health score trend</h2>
+    <div class="h-sub" id="chart-sub">Score (0–100) over the observed window.</div>
+    <div id="chart"></div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <!-- Per-anchor cards -->
+  <section class="cards" id="cards" aria-label="Per-anchor health"></section>
+
+  <!-- Table view (accessibility / no-color path) -->
+  <section class="panel" id="table-panel" hidden>
+    <h2>Tabular view</h2>
+    <div id="table"></div>
+  </section>
+
+  <footer style="margin-top:28px;color:var(--text-muted);font-size:12px">
+    Self-contained · no external assets · no credentials stored or rendered.
+    See <code>observability/README.md</code> for the health-score JSON contract.
+  </footer>
+</div>
+
+<script>
+"use strict";
+(function () {
+  // ---- Config & persistence -------------------------------------------------
+  var LS = {
+    endpoint: "anchorkit.monitor.endpoint",
+    interval: "anchorkit.monitor.interval",
+    theme:    "anchorkit.monitor.theme",
+    history:  "anchorkit.monitor.history"
+  };
+  var MAX_POINTS = 240;          // ring-buffer cap per anchor (client-accumulated trend)
+  var STALE_AFTER_MS = 3;        // mark stale after N missed intervals
+
+  // Secrets must never surface in the UI. Redact anything credential-shaped as
+  // defence-in-depth, in case the upstream module leaks such a field.
+  var SENSITIVE_KEY_RE = /(api[_-]?key|secret|token|jwt|bearer|authorization|auth|password|passwd|private[_-]?key|credential|session)/i;
+
+  var els = {
+    endpoint: byId("endpoint"), interval: byId("interval"),
+    refresh: byId("refresh"), pause: byId("pause"), demo: byId("demo"),
+    view: byId("view"), theme: byId("theme"),
+    conn: byId("conn"), connLabel: byId("conn-label"), connWhen: byId("conn-when"),
+    banner: byId("banner"), summary: byId("summary"),
+    chart: byId("chart"), chartSub: byId("chart-sub"), legend: byId("legend"),
+    cards: byId("cards"), tablePanel: byId("table-panel"), table: byId("table")
+  };
+
+  var state = {
+    timer: null,
+    paused: false,
+    demo: false,
+    tableView: false,
+    inFlight: false,
+    consecutiveFailures: 0,
+    lastOkAt: null,
+    // history: { [anchorId]: { domain, points: [{t, score}], last: <snapshot> } }
+    history: loadHistory(),
+    lastSnapshot: []   // most recent per-anchor snapshots (for cards/table)
+  };
+
+  // ---- Boot -----------------------------------------------------------------
+  els.endpoint.value = localStorage.getItem(LS.endpoint) || "";
+  els.interval.value = clampInt(localStorage.getItem(LS.interval), 2, 600, 15);
+  applyTheme(localStorage.getItem(LS.theme));
+
+  els.refresh.addEventListener("click", function () { poll(); });
+  els.pause.addEventListener("click", togglePause);
+  els.demo.addEventListener("click", toggleDemo);
+  els.view.addEventListener("click", toggleView);
+  els.theme.addEventListener("click", cycleTheme);
+  els.endpoint.addEventListener("change", function () {
+    localStorage.setItem(LS.endpoint, els.endpoint.value.trim());
+  });
+  els.interval.addEventListener("change", function () {
+    els.interval.value = clampInt(els.interval.value, 2, 600, 15);
+    localStorage.setItem(LS.interval, els.interval.value);
+    schedule();
+  });
+
+  render();       // paint whatever history we already have
+  poll();         // first fetch
+  schedule();     // recurring
+
+  // ---- Polling --------------------------------------------------------------
+  function schedule() {
+    if (state.timer) clearInterval(state.timer);
+    if (state.paused) return;
+    var ms = clampInt(els.interval.value, 2, 600, 15) * 1000;
+    state.timer = setInterval(poll, ms);
+  }
+
+  function poll() {
+    if (state.paused) return;
+    if (state.demo) { ingest(makeDemoPayload()); return; }
+
+    var url = els.endpoint.value.trim();
+    if (!url) {
+      setConn("down", "No endpoint set");
+      showBanner("warn", "Set a health-score endpoint above, or click " +
+        "“Demo data” to preview the dashboard with synthetic data.");
+      return;
+    }
+
+    if (state.inFlight) return;
+    state.inFlight = true;
+
+    // credentials:"same-origin" lets a session cookie authenticate the request;
+    // no API key or token is ever attached client-side.
+    var controller = new AbortController();
+    var to = setTimeout(function () { controller.abort(); }, 10000);
+
+    fetch(url, {
+      method: "GET",
+      credentials: "same-origin",
+      headers: { "Accept": "application/json" },
+      cache: "no-store",
+      signal: controller.signal
+    })
+      .then(function (res) {
+        clearTimeout(to);
+        if (!res.ok) throw new Error("HTTP " + res.status + " " + res.statusText);
+        return res.json();
+      })
+      .then(function (data) {
+        state.inFlight = false;
+        state.consecutiveFailures = 0;
+        state.lastOkAt = now();
+        clearBanner();
+        ingest(data);
+      })
+      .catch(function (err) {
+        clearTimeout(to);
+        state.inFlight = false;
+        onFetchError(err);
+      });
+  }
+
+  // Graceful degradation: keep the last-known trend, mark the whole feed stale,
+  // and surface a non-blocking banner instead of blanking the dashboard.
+  function onFetchError(err) {
+    state.consecutiveFailures += 1;
+    var msg = (err && err.name === "AbortError") ? "request timed out" : (err && err.message) || "network error";
+    if (state.consecutiveFailures >= STALE_AFTER_MS) {
+      setConn("down", "Endpoint unreachable");
+    } else {
+      setConn("stale", "Retrying…");
+    }
+    showBanner("err", "Could not reach the health endpoint (" + escapeText(msg) +
+      "). Showing last-known data" + (state.lastOkAt ? " from " + timeAgo(state.lastOkAt) : "") + ".");
+    render(); // re-render so stale flags/last-checked ages update
+  }
+
+  // ---- Ingest ---------------------------------------------------------------
+  function ingest(payload) {
+    var anchors = normalizeAnchors(payload);
+    var t = now();
+    state.lastSnapshot = anchors;
+
+    anchors.forEach(function (a) {
+      var h = state.history[a.id] || (state.history[a.id] = { domain: a.domain, points: [] });
+      h.domain = a.domain;
+      h.last = a;
+
+      // Seed from any server-provided history the first time we see this anchor,
+      // so the trend isn't empty on first load.
+      if (h.points.length === 0 && a.history && a.history.length) {
+        a.history.forEach(function (p) {
+          if (isFiniteNum(p.score)) h.points.push({ t: p.t, score: clampScore(p.score) });
+        });
+      }
+      // Only record a fresh sample when the anchor was reachable this cycle;
+      // an unreachable poll must not draw a misleading 0 on the trend.
+      if (a.reachable && isFiniteNum(a.health_score)) {
+        h.points.push({ t: t, score: clampScore(a.health_score) });
+        if (h.points.length > MAX_POINTS) h.points.splice(0, h.points.length - MAX_POINTS);
+      }
+    });
+
+    var anyReachable = anchors.some(function (a) { return a.reachable; });
+    setConn(anyReachable ? "live" : "stale",
+      anyReachable ? "Live" : "All anchors unreachable");
+    state.lastOkAt = state.lastOkAt || t;
+
+    saveHistory(state.history);
+    render();
+  }
+
+  // Accept the documented shape and a couple of tolerant fallbacks, and redact
+  // any credential-shaped fields before they can reach the DOM.
+  function normalizeAnchors(payload) {
+    var list = [];
+    if (payload && Array.isArray(payload.anchors)) list = payload.anchors;
+    else if (Array.isArray(payload)) list = payload;
+
+    return list.map(function (raw, i) {
+      var r = redact(raw) || {};
+      var domain = String(r.home_domain || r.domain || r.id || ("anchor-" + (i + 1)));
+      var id = String(r.id || domain);
+      var reachable = r.reachable !== undefined ? !!r.reachable
+                    : (r.status !== "unreachable" && r.health_score !== undefined && r.health_score !== null);
+      var score = isFiniteNum(r.health_score) ? clampScore(r.health_score) : null;
+      var status = String(r.status || deriveStatus(reachable, score));
+      var checks = normalizeChecks(r.checks);
+      var history = Array.isArray(r.history)
+        ? r.history.map(function (p) {
+            return { t: normTime(p.at || p.t || p.time), score: isFiniteNum(p.score) ? clampScore(p.score) : null };
+          }).filter(function (p) { return p.score !== null; })
+        : [];
+      return {
+        id: id, domain: domain, reachable: reachable, health_score: score,
+        status: status, checks: checks, history: history,
+        last_checked: normTime(r.last_checked || r.checked_at),
+        error: r.error ? escapeText(String(r.error)) : null
+      };
+    });
+  }
+
+  function normalizeChecks(checks) {
+    if (!checks || typeof checks !== "object") return [];
+    return Object.keys(checks).map(function (k) {
+      var v = checks[k];
+      var label = k.replace(/_/g, " ");
+      var kind = "unknown", detail = "";
+      if (typeof v === "boolean") { kind = v ? "pass" : "fail"; }
+      else if (typeof v === "number") { kind = "info"; detail = k.indexOf("ms") >= 0 || /time/.test(k) ? v + " ms" : String(v); }
+      else if (typeof v === "string") {
+        var s = v.toLowerCase();
+        kind = s === "pass" || s === "ok" || s === "up" ? "pass"
+             : s === "warn" || s === "degraded" ? "warn"
+             : s === "fail" || s === "down" || s === "error" ? "fail" : "unknown";
+        detail = kind === "unknown" ? v : "";
+      }
+      return { label: label, kind: kind, detail: detail };
+    });
+  }
+
+  // Recursively drop credential-shaped keys. Returns a safe shallow-ish copy.
+  function redact(obj) {
+    if (Array.isArray(obj)) return obj.map(redact);
+    if (obj && typeof obj === "object") {
+      var out = {};
+      Object.keys(obj).forEach(function (k) {
+        if (SENSITIVE_KEY_RE.test(k)) return;      // never let it into the DOM
+        out[k] = redact(obj[k]);
+      });
+      return out;
+    }
+    return obj;
+  }
+
+  function deriveStatus(reachable, score) {
+    if (!reachable || score === null) return "unreachable";
+    if (score >= 90) return "healthy";
+    if (score >= 70) return "degraded";
+    return "unhealthy";
+  }
+
+  // ---- Render ---------------------------------------------------------------
+  function render() {
+    renderSummary();
+    renderChart();
+    renderCards();
+    if (state.tableView) renderTable();
+    updateStaleAges();
+  }
+
+  function renderSummary() {
+    var snap = state.lastSnapshot;
+    var counts = { healthy: 0, degraded: 0, unhealthy: 0, unreachable: 0 };
+    var scored = [];
+    snap.forEach(function (a) {
+      var st = statusBucket(a.status);
+      counts[st] = (counts[st] || 0) + 1;
+      if (a.reachable && a.health_score !== null) scored.push(a.health_score);
+    });
+    var avg = scored.length ? Math.round(scored.reduce(function (s, n) { return s + n; }, 0) / scored.length) : null;
+
+    els.summary.innerHTML =
+      tile("Anchors tracked", snap.length, "accent") +
+      tile("Avg health", avg === null ? "—" : avg, "", avg === null ? "" : "small") +
+      tile("Healthy", counts.healthy) +
+      tile("Degraded", counts.degraded) +
+      tile("Unhealthy", counts.unhealthy) +
+      tile("Unreachable", counts.unreachable);
+  }
+
+  function tile(k, v, cls, vcls) {
+    return '<div class="tile ' + (cls || "") + '"><div class="k">' + escapeText(k) +
+      '</div><div class="v ' + (vcls || "") + '">' + escapeText(String(v)) + "</div></div>";
+  }
+
+  function renderChart() {
+    var series = Object.keys(state.history).map(function (id, i) {
+      var h = state.history[id];
+      return { id: id, domain: h.domain, color: seriesColor(i), points: h.points };
+    }).filter(function (s) { return s.points.length > 0; });
+
+    if (series.length === 0) {
+      els.chart.innerHTML = emptyChart("Waiting for the first health sample…");
+      els.legend.innerHTML = "";
+      return;
+    }
+
+    var W = 1040, H = 260, padL = 40, padR = 16, padT = 12, padB = 26;
+    var plotW = W - padL - padR, plotH = H - padT - padB;
+
+    var allT = [], allS = [];
+    series.forEach(function (s) { s.points.forEach(function (p) { allT.push(msOf(p.t)); allS.push(p.score); }); });
+    var tMin = Math.min.apply(null, allT), tMax = Math.max.apply(null, allT);
+    if (tMin === tMax) { tMin -= 1000; tMax += 1000; }
+    var yMin = 0, yMax = 100;
+
+    function x(t) { return padL + (msOf(t) - tMin) / (tMax - tMin) * plotW; }
+    function y(v) { return padT + (1 - (v - yMin) / (yMax - yMin)) * plotH; }
+
+    var svg = '<svg viewBox="0 0 ' + W + " " + H + '" width="100%" role="img" ' +
+      'aria-label="Line chart of anchor health score over time" preserveAspectRatio="xMidYMid meet">';
+
+    // gridlines + y ticks
+    [0, 25, 50, 70, 90, 100].forEach(function (v) {
+      var yy = y(v);
+      svg += line(padL, yy, W - padR, yy, "var(--grid)", 1);
+      svg += '<text x="' + (padL - 6) + '" y="' + (yy + 3) + '" text-anchor="end" font-size="10" fill="var(--text-muted)">' + v + "</text>";
+    });
+    // baseline
+    svg += line(padL, y(0), W - padR, y(0), "var(--baseline)", 1);
+
+    // x endpoints
+    svg += '<text x="' + padL + '" y="' + (H - 8) + '" font-size="10" fill="var(--text-muted)">' + escapeText(fmtTime(tMin)) + "</text>";
+    svg += '<text x="' + (W - padR) + '" y="' + (H - 8) + '" text-anchor="end" font-size="10" fill="var(--text-muted)">' + escapeText(fmtTime(tMax)) + "</text>";
+
+    // series lines + end dots
+    series.forEach(function (s) {
+      var d = "";
+      s.points.forEach(function (p, idx) { d += (idx ? "L" : "M") + x(p.t).toFixed(1) + " " + y(p.score).toFixed(1) + " "; });
+      svg += '<path d="' + d + '" fill="none" stroke="' + s.color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+      var last = s.points[s.points.length - 1];
+      // 2px surface ring so the dot stays legible where lines cross
+      svg += '<circle cx="' + x(last.t).toFixed(1) + '" cy="' + y(last.score).toFixed(1) + '" r="4" fill="' + s.color + '" stroke="var(--surface-1)" stroke-width="2"/>';
+    });
+
+    svg += "</svg>";
+    els.chart.innerHTML = svg;
+
+    // legend (always present for >=2 series; single series still labelled here for clarity)
+    els.legend.innerHTML = series.map(function (s) {
+      return '<span class="item"><span class="swatch" style="background:' + s.color + '"></span>' +
+        escapeText(s.domain) + "</span>";
+    }).join("");
+
+    var span = tMax - tMin;
+    els.chartSub.textContent = "Score (0–100) over " + humanizeDuration(span) +
+      " · " + series.length + " anchor" + (series.length === 1 ? "" : "s") +
+      " · " + allT.length + " samples.";
+  }
+
+  function renderCards() {
+    var snap = state.lastSnapshot;
+    if (snap.length === 0) {
+      els.cards.innerHTML = '<div class="panel" style="grid-column:1/-1">No anchors reported yet.</div>';
+      return;
+    }
+    els.cards.innerHTML = snap.map(function (a) {
+      var h = state.history[a.id];
+      var stale = isStale(a);
+      var bucket = statusBucket(a.status);
+      var scoreDisplay = (a.reachable && a.health_score !== null)
+        ? a.health_score + '<span class="unit">/100</span>'
+        : '<span class="unit" style="font-size:22px">—</span>';
+
+      var checks = a.checks.length
+        ? '<div class="checks">' + a.checks.map(function (c) {
+            var dotCls = c.kind === "info" ? "unknown" : c.kind;
+            return '<span class="chip"><span class="dot ' + dotCls + '"></span>' +
+              escapeText(c.label) + (c.detail ? " · " + escapeText(c.detail) : "") + "</span>";
+          }).join("") + "</div>"
+        : "";
+
+      var err = (!a.reachable && a.error) ? '<div class="meta" style="color:var(--critical);margin-top:6px">' + a.error + "</div>" : "";
+
+      return '<article class="card ' + (a.reachable ? "" : "unreachable") + '">' +
+        (stale ? '<span class="stale-flag" title="No fresh sample recently">stale</span>' : "") +
+        '<div class="top"><span class="domain">' + escapeText(a.domain) + "</span>" + badge(bucket) + "</div>" +
+        '<div class="score">' + scoreDisplay + "</div>" +
+        '<div class="meta" data-checked="' + (a.last_checked || "") + '">' + lastCheckedText(a) + "</div>" +
+        sparkline(h ? h.points : [], bucket) +
+        checks + err +
+        "</article>";
+    }).join("");
+  }
+
+  function sparkline(points, bucket) {
+    if (!points || points.length < 2) return "";
+    var W = 240, H = 44, pad = 3;
+    var xs = points.map(function (p) { return msOf(p.t); });
+    var tMin = Math.min.apply(null, xs), tMax = Math.max.apply(null, xs);
+    if (tMin === tMax) tMax = tMin + 1;
+    var color = bucketColor(bucket);
+    function x(t) { return pad + (msOf(t) - tMin) / (tMax - tMin) * (W - 2 * pad); }
+    function y(v) { return pad + (1 - v / 100) * (H - 2 * pad); }
+    var d = "";
+    points.forEach(function (p, i) { d += (i ? "L" : "M") + x(p.t).toFixed(1) + " " + y(p.score).toFixed(1) + " "; });
+    var last = points[points.length - 1];
+    return '<div class="sparkline"><svg viewBox="0 0 ' + W + " " + H + '" width="100%" height="' + H +
+      '" preserveAspectRatio="none" role="img" aria-label="Recent score trend for this anchor">' +
+      '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+      '<circle cx="' + x(last.t).toFixed(1) + '" cy="' + y(last.score).toFixed(1) + '" r="3" fill="' + color + '"/>' +
+      "</svg></div>";
+  }
+
+  function renderTable() {
+    var snap = state.lastSnapshot;
+    var rows = snap.map(function (a) {
+      var h = state.history[a.id];
+      var pts = h ? h.points : [];
+      var trend = pts.length ? pts.map(function (p) { return p.score; }).join(", ") : "—";
+      return "<tr><td>" + escapeText(a.domain) + "</td><td>" +
+        (a.reachable && a.health_score !== null ? a.health_score : "—") + "</td><td>" +
+        escapeText(a.status) + "</td><td>" + escapeText(lastCheckedText(a)) + "</td><td style=\"max-width:260px;color:var(--text-muted)\">" +
+        escapeText(trend) + "</td></tr>";
+    }).join("");
+    els.table.innerHTML =
+      '<table><caption>Health scores and recorded trend (oldest → newest).</caption><thead><tr>' +
+      "<th>Anchor</th><th>Score</th><th>Status</th><th>Last checked</th><th>Trend samples</th>" +
+      "</tr></thead><tbody>" + (rows || '<tr><td colspan="5">No data.</td></tr>') + "</tbody></table>";
+  }
+
+  // ---- Small view helpers ---------------------------------------------------
+  function badge(bucket) {
+    var labels = { healthy: "Healthy", degraded: "Degraded", unhealthy: "Unhealthy", unreachable: "Unreachable" };
+    return '<span class="badge ' + bucket + '">' + statusIcon(bucket) + escapeText(labels[bucket] || bucket) + "</span>";
+  }
+
+  // Status is never colour-alone: every badge carries an icon + a text label.
+  function statusIcon(bucket) {
+    var paths = {
+      healthy:   '<path d="M2 6l3 3 5-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+      degraded:  '<path d="M6 1v7M6 10.5v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+      unhealthy: '<path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+      unreachable:'<circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3 3l6 6" stroke="currentColor" stroke-width="1.5"/>'
+    };
+    return '<svg class="ico" viewBox="0 0 12 12" aria-hidden="true">' + (paths[bucket] || "") + "</svg>";
+  }
+
+  function statusBucket(status) {
+    var s = String(status || "").toLowerCase();
+    if (s === "healthy" || s === "ok" || s === "up") return "healthy";
+    if (s === "degraded" || s === "warn" || s === "warning") return "degraded";
+    if (s === "unhealthy" || s === "down" || s === "critical" || s === "error") return "unhealthy";
+    return "unreachable";
+  }
+  function bucketColor(bucket) {
+    return bucket === "healthy" ? "var(--good)" : bucket === "degraded" ? "var(--warning)"
+      : bucket === "unhealthy" ? "var(--critical)" : "var(--text-muted)";
+  }
+  function seriesColor(i) { return "var(--series-" + ((i % 8) + 1) + ")"; }
+
+  function lastCheckedText(a) {
+    if (a.last_checked) { var ms = msOf(a.last_checked); if (ms) return "Checked " + timeAgo(ms); }
+    return a.reachable ? "Checked just now" : "Not reachable";
+  }
+  function isStale(a) {
+    if (!a.last_checked) return !a.reachable && state.consecutiveFailures > 0;
+    var ageMs = now() - msOf(a.last_checked);
+    var budget = clampInt(els.interval.value, 2, 600, 15) * 1000 * STALE_AFTER_MS;
+    return ageMs > budget;
+  }
+  function updateStaleAges() {
+    var nodes = els.cards.querySelectorAll(".meta[data-checked]");
+    for (var i = 0; i < nodes.length; i++) {
+      var iso = nodes[i].getAttribute("data-checked");
+      if (iso) { var ms = msOf(iso); if (ms) nodes[i].textContent = "Checked " + timeAgo(ms); }
+    }
+  }
+
+  // ---- Controls -------------------------------------------------------------
+  function togglePause() {
+    state.paused = !state.paused;
+    els.pause.textContent = state.paused ? "Resume" : "Pause";
+    els.pause.setAttribute("aria-pressed", String(state.paused));
+    if (state.paused) { if (state.timer) clearInterval(state.timer); setConn("stale", "Paused"); }
+    else { poll(); schedule(); }
+  }
+  function toggleDemo() {
+    state.demo = !state.demo;
+    els.demo.setAttribute("aria-pressed", String(state.demo));
+    if (state.demo) { clearBanner(); showBanner("warn", "Demo mode: data is synthetic and generated locally. No network requests are made."); poll(); }
+    else { clearBanner(); poll(); }
+  }
+  function toggleView() {
+    state.tableView = !state.tableView;
+    els.view.setAttribute("aria-pressed", String(state.tableView));
+    els.tablePanel.hidden = !state.tableView;
+    if (state.tableView) renderTable();
+  }
+  function cycleTheme() {
+    var cur = document.documentElement.getAttribute("data-theme");
+    var next = cur === "dark" ? "light" : cur === "light" ? null : "dark";
+    applyTheme(next);
+    if (next) localStorage.setItem(LS.theme, next); else localStorage.removeItem(LS.theme);
+    render();
+  }
+  function applyTheme(t) {
+    if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+    else document.documentElement.removeAttribute("data-theme");
+  }
+
+  // ---- Connection + banner --------------------------------------------------
+  function setConn(kind, label) {
+    els.conn.className = "conn " + kind;
+    els.connLabel.textContent = label;
+    els.connWhen.textContent = state.lastOkAt ? "· updated " + timeAgo(state.lastOkAt) : "";
+  }
+  function showBanner(kind, msg) {
+    els.banner.className = "banner show " + kind;
+    els.banner.textContent = msg;
+  }
+  function clearBanner() { els.banner.className = "banner"; els.banner.textContent = ""; }
+
+  // ---- Demo data ------------------------------------------------------------
+  // Deterministic-ish synthetic feed so the dashboard is reviewable without the
+  // module running. Uses a per-anchor walk; contains NO secret fields.
+  var demoSeed = { "kyc.anchor.example": 96, "usdc.stellar-anchor.io": 82, "eur.testnet-anchor.dev": 61, "flaky.anchor.example": 40 };
+  function makeDemoPayload() {
+    var t = now();
+    var anchors = Object.keys(demoSeed).map(function (dom, i) {
+      var base = demoSeed[dom];
+      var drift = Math.sin((t / 60000) + i) * 6 + (i === 3 ? Math.sin(t / 9000) * 20 : 0);
+      var score = Math.max(0, Math.min(100, Math.round(base + drift)));
+      // occasionally knock the flaky one offline
+      var reachable = !(i === 3 && Math.floor(t / 12000) % 4 === 0);
+      demoSeed[dom] = Math.max(20, Math.min(99, base + (i === 3 ? 0 : (score > base ? -0.4 : 0.4))));
+      return {
+        id: dom, home_domain: dom, reachable: reachable,
+        health_score: reachable ? score : null,
+        status: reachable ? (score >= 90 ? "healthy" : score >= 70 ? "degraded" : "unhealthy") : "unreachable",
+        last_checked: new Date(t).toISOString(),
+        error: reachable ? null : "connection refused",
+        checks: {
+          stellar_toml: reachable ? "pass" : "fail",
+          sep10_auth: reachable && score > 50 ? "pass" : "warn",
+          sep24_transfer: reachable && score > 75 ? "pass" : (reachable ? "warn" : "fail"),
+          response_time_ms: reachable ? Math.round(120 + (100 - score) * 6) : null
+        }
+      };
+    });
+    return { generated_at: new Date(t).toISOString(), anchors: anchors };
+  }
+
+  // ---- Persistence ----------------------------------------------------------
+  function loadHistory() {
+    try {
+      var raw = localStorage.getItem(LS.history);
+      if (!raw) return {};
+      var obj = JSON.parse(raw);
+      // trim on load
+      Object.keys(obj).forEach(function (id) {
+        var pts = obj[id] && obj[id].points;
+        if (Array.isArray(pts) && pts.length > MAX_POINTS) obj[id].points = pts.slice(-MAX_POINTS);
+      });
+      return obj || {};
+    } catch (e) { return {}; }
+  }
+  function saveHistory(h) {
+    try {
+      // store a compact copy without the transient `last` snapshot
+      var slim = {};
+      Object.keys(h).forEach(function (id) { slim[id] = { domain: h[id].domain, points: h[id].points }; });
+      localStorage.setItem(LS.history, JSON.stringify(slim));
+    } catch (e) { /* quota / disabled storage — non-fatal */ }
+  }
+
+  // ---- Utils ----------------------------------------------------------------
+  function byId(id) { return document.getElementById(id); }
+  function now() { return Date.now(); }
+  function isFiniteNum(n) { return typeof n === "number" && isFinite(n); }
+  function clampScore(n) { return Math.max(0, Math.min(100, Math.round(n))); }
+  function clampInt(v, lo, hi, dflt) { var n = parseInt(v, 10); if (!isFinite(n)) n = dflt; return Math.max(lo, Math.min(hi, n)); }
+  function normTime(v) { if (!v) return null; var ms = msOf(v); return ms ? new Date(ms).toISOString() : null; }
+  function msOf(v) {
+    if (typeof v === "number") return v;
+    if (typeof v === "string") { var d = Date.parse(v); return isNaN(d) ? 0 : d; }
+    return 0;
+  }
+  function fmtTime(ms) { var d = new Date(ms); return pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds()); }
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+  function timeAgo(ms) {
+    var s = Math.max(0, Math.round((now() - ms) / 1000));
+    if (s < 5) return "just now";
+    if (s < 60) return s + "s ago";
+    var m = Math.round(s / 60); if (m < 60) return m + "m ago";
+    var h = Math.round(m / 60); if (h < 24) return h + "h ago";
+    return Math.round(h / 24) + "d ago";
+  }
+  function humanizeDuration(ms) {
+    var s = Math.round(ms / 1000);
+    if (s < 90) return s + "s";
+    var m = Math.round(s / 60); if (m < 90) return m + "m";
+    return Math.round(m / 60) + "h";
+  }
+  function line(x1, y1, x2, y2, stroke, w) {
+    return '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + stroke + '" stroke-width="' + w + '"/>';
+  }
+  function emptyChart(msg) {
+    return '<div style="height:200px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:13px">' +
+      escapeText(msg) + "</div>";
+  }
+  function escapeText(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+})();
+</script>
+</body>
+</html>
