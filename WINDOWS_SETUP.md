@@ -55,6 +55,8 @@ cargo test
 
 Tests use `soroban-sdk`'s `testutils` feature (already wired up via `[dev-dependencies]` in `Cargo.toml`) and run on your **host** target, not `wasm32v1-none` — you don't need to pass `--target` for `cargo test`.
 
+> **Known limitation:** `cargo test` is currently skipped on Windows in CI. See [Known Windows Gotchas](#cargo-test-is-not-run-on-windows-in-ci) below before relying on it as your primary test signal.
+
 To run the gated allow-list stress benchmark (skipped by default):
 
 ```powershell
@@ -68,6 +70,30 @@ If you're working from PowerShell (not WSL or Git Bash), note the following Powe
 - Environment variables are set differently: use `$env:VAR_NAME = "value"` instead of `export VAR_NAME=value`.
 
 ## Known Windows Gotchas
+
+### `cargo test` is not run on Windows in CI
+
+CI (`.github/workflows/ci.yml`) skips `cargo test` entirely on Windows runners:
+
+```yaml
+- name: Run Cargo Tests (Linux / macOS only)
+  if: runner.os != 'Windows'
+  run: cargo test
+```
+
+This is because `cargo test` fails on the `x86_64-pc-windows-gnu` toolchain with
+`ld: error: export ordinal too large` — the `soroban-sdk` test harness generates
+more DLL exports than the PE/COFF format allows. The WASM contract build
+(`--target wasm32v1-none`) is unaffected. See
+[`docs/platform-quirks.md`](docs/platform-quirks.md) and issue #WIN-1 for the
+full analysis.
+
+This guide recommends the `msvc` toolchain (see [Prerequisites](#prerequisites)),
+and it has **not yet been confirmed** whether this failure also affects `msvc` —
+only `gnu` has been verified to fail. Until that's confirmed, don't treat a
+local `cargo test` pass on Windows as equivalent to CI: push your branch and
+let the Linux/macOS CI jobs validate your changes, or run tests via WSL if you
+want a same-machine signal that matches CI.
 
 ### Path length limits (MAX_PATH)
 
@@ -131,7 +157,7 @@ Run the full test suite to confirm everything is working:
 cargo test
 ```
 
-All tests under `test_snapshots/` (admin, attest, attestor, pause, revoke, smoke) should pass with no `wasm32v1-none` target or toolchain errors.
+Tests under `test_snapshots/` (admin, attest, attestor, pause, revoke, smoke) should pass locally with no `wasm32v1-none` target or toolchain errors on `msvc`. Note that this local run isn't currently mirrored by CI on Windows — see [`cargo test` is not run on Windows in CI](#cargo-test-is-not-run-on-windows-in-ci) above.
 
 ## Running the CI preflight check
 
