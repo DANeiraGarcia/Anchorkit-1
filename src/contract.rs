@@ -92,6 +92,26 @@ impl AnchorKitContract {
         storage::is_attestor(&env, &attestor)
     }
 
+    /// Re-touches an already-registered attestor's persistent storage TTL
+    /// without changing anything else. Soroban clamps `extend_ttl` to its
+    /// network-wide `max_entry_ttl` ceiling (~365 days, see
+    /// `storage::MAX_ENTRY_TTL_LEDGERS`), so a single `add_attestor` call
+    /// can't buy TTL for the allow-list entry's entire (indefinite)
+    /// lifetime, and nothing else naturally re-touches this key between
+    /// `add_attestor` and `remove_attestor`. Calling this periodically
+    /// (well before that ceiling) keeps a long-standing attestor from
+    /// being archived out of the allow-list. Admin-only.
+    pub fn renew_attestor(env: Env, attestor: Address) -> Result<(), Error> {
+        let admin = storage::get_admin(&env)?;
+        admin.require_auth();
+        if !storage::is_attestor(&env, &attestor) {
+            return Err(Error::AttestorNotRegistered);
+        }
+        storage::set_attestor(&env, &attestor, true);
+        events::attestor_renewed(&env, &attestor);
+        Ok(())
+    }
+
     /// Anchors an off-chain attestation about `subject` on-chain. `attestor`
     /// must be on the allow-list and must authorize the call. Overwrites any
     /// prior attestation of the same `attestation_type` for this subject.
@@ -253,6 +273,36 @@ impl AnchorKitContract {
         attestation.status = AttestationStatus::Revoked;
         storage::set_attestation(&env, &subject, &attestation_type, &attestation);
         events::revoked(&env, &subject, &attestation_type, &caller);
+        Ok(())
+    }
+
+    /// Re-touches an existing attestation's persistent storage TTL without
+    /// changing its content. Soroban clamps any single `extend_ttl` call to
+    /// its network-wide `max_entry_ttl` (~365 days, see
+    /// `storage::MAX_ENTRY_TTL_LEDGERS`), so an attestation issued with a
+    /// longer `ttl_seconds` can't have its whole lifetime pre-purchased at
+    /// `attest` time. Calling this periodically (well before that ceiling)
+    /// keeps such long-lived attestations from being archived while still
+    /// logically valid. May be called by the admin or the original
+    /// attestor, same as `revoke`.
+    pub fn renew_attestation(
+        env: Env,
+        caller: Address,
+        subject: Address,
+        attestation_type: Symbol,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+
+        let attestation = storage::get_attestation(&env, &subject, &attestation_type)
+            .ok_or(Error::AttestationNotFound)?;
+
+        let admin = storage::get_admin(&env)?;
+        if caller != admin && caller != attestation.attestor {
+            return Err(Error::Unauthorized);
+        }
+
+        storage::set_attestation(&env, &subject, &attestation_type, &attestation);
+        events::attestation_renewed(&env, &subject, &attestation_type, &caller);
         Ok(())
     }
 

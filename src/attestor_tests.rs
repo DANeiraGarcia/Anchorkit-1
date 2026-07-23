@@ -54,3 +54,35 @@ fn non_admin_cannot_add_attestor() {
     let result = s.client.try_add_attestor(&attestor);
     assert!(result.is_err());
 }
+
+#[test]
+fn renew_attestor_keeps_registration_active() {
+    let s = setup();
+    let attestor = Address::generate(&s.env);
+    s.client.add_attestor(&attestor);
+
+    s.client.renew_attestor(&attestor);
+
+    assert!(s.client.is_attestor(&attestor));
+}
+
+#[test]
+fn cannot_renew_unregistered_attestor() {
+    let s = setup();
+    let attestor = Address::generate(&s.env);
+    assert_eq!(
+        s.client.try_renew_attestor(&attestor),
+        Err(Ok(Error::AttestorNotRegistered))
+    );
+}
+
+#[test]
+fn non_admin_cannot_renew_attestor() {
+    let s = setup();
+    let attestor = Address::generate(&s.env);
+    s.client.add_attestor(&attestor);
+
+    s.env.set_auths(&[]);
+    let result = s.client.try_renew_attestor(&attestor);
+    assert!(result.is_err());
+}

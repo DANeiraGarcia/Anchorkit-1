@@ -29,6 +29,13 @@ pub struct AttestorRemoved {
     pub attestor: Address,
 }
 
+#[contractevent(topics = ["attestor_renew"])]
+#[derive(Clone, Debug)]
+pub struct AttestorRenewed {
+    #[topic]
+    pub attestor: Address,
+}
+
 #[contractevent(topics = ["attest"])]
 #[derive(Clone, Debug)]
 pub struct Attested {
@@ -49,6 +56,16 @@ pub struct Revoked {
     #[topic]
     pub attestation_type: Symbol,
     pub revoked_by: Address,
+}
+
+#[contractevent(topics = ["renew"])]
+#[derive(Clone, Debug)]
+pub struct AttestationRenewed {
+    #[topic]
+    pub subject: Address,
+    #[topic]
+    pub attestation_type: Symbol,
+    pub renewed_by: Address,
 }
 
 #[contractevent(topics = ["pause"])]
@@ -86,6 +103,13 @@ pub fn attestor_removed(env: &Env, attestor: &Address) {
     .publish(env);
 }
 
+pub fn attestor_renewed(env: &Env, attestor: &Address) {
+    AttestorRenewed {
+        attestor: attestor.clone(),
+    }
+    .publish(env);
+}
+
 pub fn attested(
     env: &Env,
     attestor: &Address,
@@ -115,4 +139,18 @@ pub fn revoked(env: &Env, subject: &Address, attestation_type: &Symbol, revoked_
 
 pub fn pause_toggled(env: &Env, paused: bool) {
     PauseToggled { paused }.publish(env);
+}
+
+pub fn attestation_renewed(
+    env: &Env,
+    subject: &Address,
+    attestation_type: &Symbol,
+    renewed_by: &Address,
+) {
+    AttestationRenewed {
+        subject: subject.clone(),
+        attestation_type: attestation_type.clone(),
+        renewed_by: renewed_by.clone(),
+    }
+    .publish(env);
 }
