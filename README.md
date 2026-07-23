@@ -34,11 +34,13 @@ as issues.
 | `get_admin()` / `set_admin(new_admin)` | Read/transfer contract administration. |
 | `pause()` / `unpause()` / `is_paused()` | Admin circuit breaker; blocks `attest`/`revoke` while active, reads still work. |
 | `add_attestor(attestor)` / `remove_attestor(attestor)` / `is_attestor(attestor)` | Admin-managed allow-list of addresses permitted to attest. |
+| `renew_attestor(attestor)` | Re-touches an already-registered attestor's persistent storage TTL, admin-only. See "Storage rent & TTL" below for why this exists. |
 | `attest(attestor, subject, attestation_type, payload_hash, ttl_seconds)` | Anchors a sha256 payload hash on-chain for `subject` under `attestation_type`. Requires `attestor` to be allow-listed and to authorize the call. |
 | `attest_batch(attestor, entries)` | Anchors multiple attestations from one attestor in a single call; each entry is a `(subject, attestation_type, payload_hash, ttl_seconds)` tuple. Atomic — one invalid entry fails the whole batch — and emits one `Attested` event per entry, same as `attest`. See "Batch attestation gas amortization" below for when it's worth using. |
 | `get_attestation(subject, attestation_type)` | Fetches a stored attestation, or `AttestationNotFound`. |
 | `is_valid(subject, attestation_type)` | `true` iff an attestation exists, is active, and hasn't expired. |
 | `revoke(caller, subject, attestation_type)` | Revokes an attestation; `caller` must be the admin or the original attestor. |
+| `renew_attestation(caller, subject, attestation_type)` | Re-touches an attestation's persistent storage TTL without changing its content; `caller` must be the admin or the original attestor. See "Storage rent & TTL" below. |
 | `get_attestation_count()` | Running count of attestations ever submitted. |
 
 Supporting modules:
@@ -67,6 +69,24 @@ Savings climb fast up to a batch of ~10 (46.9%) and then flatten out,
 approaching but never reaching 50% — that's the fixed-cost share of a single
 `attest` call. Batching more than ~10-20 entries at once buys very little
 extra per-entry savings.
+
+## Storage rent & TTL
+
+Persistent storage TTL bumps (`extend_ttl`) are sized per entry rather than
+a single flat constant: attestations buy a rent window proportional to
+their own `ttl_seconds` (floored at 30 days, capped at Soroban's network-wide
+`max_entry_ttl`), and attestor allow-list entries buy that same network
+maximum up front since they have no natural expiry. This cuts rent 51-92%
+for the common days-to-months attestation case relative to the old flat
+365-day window, with no change in safety.
+
+Soroban clamps `extend_ttl` to `max_entry_ttl` (~365 days) regardless of what's
+requested, so a single call can never cover a multi-year attestation or an
+indefinitely-long-lived attestor. `renew_attestation` and `renew_attestor`
+exist to re-touch those entries' TTL well before that ceiling, so long-lived
+data doesn't archive out from under a still-valid attestation or attestor.
+See [`docs/storage-rent-cost-analysis.md`](docs/storage-rent-cost-analysis.md)
+for the full worked cost comparison and rationale.
 
 **Hard ceiling, not just a cost curve:** each attestation occupies two
 ledger footprint slots (its data entry and its TTL/rent entry), and Soroban

@@ -35,6 +35,12 @@ mod batch_gas_benchmark;
 mod revoke_tests;
 
 #[cfg(test)]
+mod storage_ttl_tests;
+
+#[cfg(test)]
+mod renew_attestation_tests;
+
+#[cfg(test)]
 mod pause_tests;
 
 #[cfg(all(test, feature = "stress-tests"))]
