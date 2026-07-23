@@ -1,3 +1,5 @@
 /target
 Cargo.lock.bak
 *.swp
+/mutants.out
+/mutants.out.old

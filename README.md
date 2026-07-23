@@ -119,6 +119,7 @@ full analysis and follow-up issue (#WIN-1).
 ## Documentation
 
 - [Revocation notification design](docs/revocation-notification-design.md) — proposed payload and delivery semantics for notifying subscribers when an attestation should be revoked.
+- [Mutation testing](docs/mutation-testing.md) — `cargo-mutants` baseline for `src/contract.rs`, the surviving mutant that got fixed, and how the scheduled CI job is wired.
 
 ## Roadmap
 
