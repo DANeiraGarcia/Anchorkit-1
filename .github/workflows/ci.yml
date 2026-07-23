@@ -21,11 +21,23 @@ jobs:
 
       # rust-toolchain.toml (channel = "stable") is picked up automatically,
       # but we list targets explicitly here so the action installs them
-      # even on runners where rustup home may differ.
+      # even on runners where rustup home may differ. We don't pin a host
+      # toolchain suffix, so on windows-latest this resolves to rustup's
+      # default host, x86_64-pc-windows-msvc -- see the Windows note below.
       - name: Install Rust toolchain with WASM target
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32v1-none
+
+      # Caches the registry index, downloaded crates, and build artifacts
+      # keyed on Cargo.lock, so a matrix re-run (or a later CI run with an
+      # unchanged lockfile) doesn't recompile the full soroban-sdk dependency
+      # tree on every OS. Keeps the 3x runner count from tripling wall-clock
+      # or billed compile time on repeat runs.
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ matrix.os }}
 
       # The preflight script is a bash script; on Windows the GitHub-hosted
       # runner provides Git Bash so this works across all three platforms.
@@ -35,15 +47,18 @@ jobs:
           chmod +x ./scripts/ci_preflight_check.sh
           ./scripts/ci_preflight_check.sh
 
-      # NOTE (Windows / x86_64-pc-windows-gnu): cargo test fails on the gnu
-      # toolchain with "export ordinal too large" because the soroban-sdk test
-      # harness pulls in enough symbols to overflow the PE ordinal table.
-      # Workaround: skip the native test step on Windows and rely on the
-      # Linux/macOS runners for test coverage.  The WASM build (below) is
-      # unaffected and still validates the contract on all platforms.
-      # Tracked in: docs/platform-quirks.md
-      - name: Run Cargo Tests (Linux / macOS only)
-        if: runner.os != 'Windows'
+      # NOTE (Windows): earlier CI ran a bash-installed x86_64-pc-windows-gnu
+      # toolchain, which hit "export ordinal too large" -- the soroban-sdk
+      # test harness (testutils) generates more DLL exports than the PE/COFF
+      # format allows on that target. windows-latest's default host toolchain
+      # is x86_64-pc-windows-msvc (with Visual Studio Build Tools
+      # preinstalled on the runner image), which uses a different linker and
+      # export mechanism entirely, so it isn't subject to that ordinal
+      # ceiling. Running the native suite here verifies that on every CI run
+      # rather than assuming it. See docs/platform-quirks.md for the full
+      # history, including the GNU-specific quirk for local Windows/MinGW
+      # setups.
+      - name: Run Cargo Tests
         run: cargo test
 
       - name: Build deployable contract (wasm32v1-none)
