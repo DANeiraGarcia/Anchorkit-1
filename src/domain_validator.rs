@@ -11,7 +11,19 @@ const MAX_LABEL_LEN: u32 = 63;
 /// characters, empty labels (leading/trailing/consecutive dots), labels
 /// longer than 63 bytes, and labels starting or ending with a hyphen.
 pub fn validate_anchor_domain(domain: &Bytes) -> bool {
-    let len = domain.len();
+    is_valid_domain_syntax(domain.len(), domain.iter())
+}
+
+/// Same syntactic check as [`validate_anchor_domain`], for callers that have
+/// a plain `&str` rather than a `soroban_sdk::Bytes` -- e.g. off-chain
+/// tooling like `anchorkit discover`, which has no contract `Env` to build a
+/// `Bytes` value from. Shares the exact rule set via [`is_valid_domain_syntax`]
+/// so the two never drift apart.
+pub fn validate_domain_syntax(domain: &str) -> bool {
+    is_valid_domain_syntax(domain.len() as u32, domain.bytes())
+}
+
+fn is_valid_domain_syntax(len: u32, bytes: impl Iterator<Item = u8>) -> bool {
     if !(3..=MAX_DOMAIN_LEN).contains(&len) {
         return false;
     }
@@ -20,7 +32,7 @@ pub fn validate_anchor_domain(domain: &Bytes) -> bool {
     let mut label_len: u32 = 0;
     let mut prev: Option<u8> = None;
 
-    for c in domain.iter() {
+    for c in bytes {
         let is_alnum = c.is_ascii_alphanumeric();
         let is_dash = c == b'-';
         let is_dot = c == b'.';
@@ -114,5 +126,32 @@ mod tests {
         assert!(!validate_anchor_domain(&domain(&env, "exa mple.com")));
         assert!(!validate_anchor_domain(&domain(&env, "example.com/path")));
         assert!(!validate_anchor_domain(&domain(&env, "exa_mple.com")));
+    }
+
+    #[test]
+    fn str_variant_agrees_with_bytes_variant() {
+        let env = Env::default();
+        let cases = [
+            "anchor.example.com",
+            "a.co",
+            "sub.multi-part.anchor.io",
+            "",
+            "localhost",
+            ".example.com",
+            "example.com.",
+            "example..com",
+            "-example.com",
+            "example-.com",
+            "exa mple.com",
+            "example.com/path",
+            "exa_mple.com",
+        ];
+        for case in cases {
+            assert_eq!(
+                validate_domain_syntax(case),
+                validate_anchor_domain(&domain(&env, case)),
+                "mismatch for {case:?}"
+            );
+        }
     }
 }
