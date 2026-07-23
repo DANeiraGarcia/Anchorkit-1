@@ -3,16 +3,16 @@ name = "anchorkit-cli"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Developer CLI for AnchorKit: anchor discovery and other off-chain tooling."
+description = "Developer CLI for AnchorKit: an interactive playground REPL for a deployed contract, and other off-chain tooling."
 
 [[bin]]
 name = "anchorkit"
 path = "src/main.rs"
 
 [dependencies]
-anchorkit = { path = ".." }
 clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.11", features = ["blocking", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+stellar-xdr = { version = "26.0.1", features = ["base64"] }
+stellar-strkey = "0.0.16"

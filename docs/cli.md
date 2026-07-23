@@ -9,47 +9,69 @@ cargo run -p anchorkit-cli -- <command>
 anchorkit <command>
 ```
 
-## `anchorkit discover <domain>`
+## `anchorkit playground`
 
-Fetches an anchor's `stellar.toml` (per [SEP-1]) and, if it advertises a
-transfer server, that server's `/info` endpoint. Runs the domain through the
-same syntax rules the on-chain contract uses
-(`anchorkit::domain_validator`) and reports which SEPs the anchor appears to
-support.
+An interactive REPL for calling **read-only** methods against a deployed
+`AnchorKit` contract instance, without writing a one-off script every time
+you want to check an attestation.
 
-Detection is based on which `stellar.toml` fields are present -- it does not
-independently verify that the endpoints those fields point to actually
-implement the SEP correctly, only that the anchor claims to.
+```sh
+anchorkit playground \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --contract-id CCONTRACTIDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX \
+  --source GSOURCEACCOUNTXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+```
 
-[SEP-1]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md
+`--source` just needs to be *a* well-formed account address -- it never
+needs to be funded, and nothing the playground does is ever signed or
+submitted to the network. Every supported method is a read, invoked via the
+RPC endpoint's `simulateTransaction`, so `--source` only exists to make a
+syntactically valid transaction envelope.
+
+Supported commands:
+
+| Command | Contract method |
+|---|---|
+| `get_attestation <subject> <attestation_type>` | `get_attestation` |
+| `is_valid <subject> <attestation_type>` | `is_valid` |
+| `is_attestor <attestor>` | `is_attestor` |
+| `get_attestation_count` | `get_attestation_count` |
+| `help` | -- |
+| `exit` / `quit` | -- |
+
+`<subject>` / `<attestor>` are Stellar addresses (`G...` accounts or `C...`
+contracts); `<attestation_type>` is a contract Symbol (ASCII, 32 characters
+or fewer).
 
 ### Sample session
 
 ```text
-$ anchorkit discover example-anchor.com
-anchor: example-anchor.com
-network: Public Global Stellar Network ; September 2015
-
-Supported SEPs:
-  [yes] SEP-1    stellar.toml (anchor metadata) -- VERSION 2.7.0
-  [yes] SEP-10   Web Authentication -- https://auth.example-anchor.com
-  [yes] SEP-6    Deposit/Withdrawal -- https://transfer.example-anchor.com (4 assets enabled)
-  [no ] SEP-24   Hosted Deposit/Withdrawal
-  [yes] SEP-12   KYC API -- https://kyc.example-anchor.com
-  [no ] SEP-31   Cross-Border Payments
-  [no ] SEP-38   Anchor RFQ (Quotes)
+$ anchorkit playground --rpc-url https://soroban-testnet.stellar.org --contract-id CCONTRACT... --source GSOURCE...
+anchorkit playground -- read-only contract calls. Type 'help' for commands, 'exit' to quit.
+anchorkit> get_attestation_count
+42
+anchorkit> is_attestor GATTESTORXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+true
+anchorkit> get_attestation GSUBJECTXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX kyc_approved
+{attestor: GATTESTORXXX..., subject: GSUBJECTXXX..., attestation_type: kyc_approved, payload_hash: 0x9f86d0..., issued_at: 1732300000, expires_at: 1763836000, status: [Active]}
+anchorkit> is_valid GSUBJECTXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX missing_type
+false
+anchorkit> exit
 ```
 
 ### Error handling
 
-Malformed domains, unreachable hosts, non-2xx responses, and unparsable
-`stellar.toml`/`/info` bodies all produce a one-line `Error: ...` message on
-stderr and a non-zero exit code -- never a panic or stack trace:
+Malformed commands, bad addresses/symbols, and RPC/simulation failures all
+print a one-line `Error: ...` message and return to the prompt -- never a
+panic:
 
 ```text
-$ anchorkit discover not a domain
-Error: 'not a domain' is not a syntactically valid anchor domain (see SEP-1 stellar.toml hosting rules)
+anchorkit> get_attestation not-an-address kyc_approved
+Error: invalid argument 'not-an-address': expected a 'G...' account address or a 'C...' contract address
 
-$ anchorkit discover this-domain-does-not-resolve.invalid
-Error: could not reach https://this-domain-does-not-resolve.invalid/.well-known/stellar.toml: error sending request for url (https://this-domain-does-not-resolve.invalid/.well-known/stellar.toml)
+anchorkit> get_attestation GSUBJECTXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+Error: usage: get_attestation <subject> <attestation_type> (got 1 argument(s))
+
+anchorkit> get_attestation GSUBJECTXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX unregistered_type
+Error: contract call failed: HostError: Error(Contract, #7)
 ```
