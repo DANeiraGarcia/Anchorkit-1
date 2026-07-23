@@ -19,7 +19,6 @@ stress-tests = []
 
 [dependencies]
 soroban-sdk = "26.1.0"
-ed25519-dalek = { version = "2", default-features = false }
 
 [dev-dependencies]
 soroban-sdk = { version = "26.1.0", features = ["testutils"] }
@@ -32,3 +31,4 @@ debug-assertions = false
 panic = "abort"
 codegen-units = 1
 lto = true
+strip = true
