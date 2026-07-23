@@ -32,6 +32,9 @@ mod attest_batch_tests;
 mod batch_gas_benchmark;
 
 #[cfg(test)]
+mod hash_benchmark;
+
+#[cfg(test)]
 mod revoke_tests;
 
 #[cfg(test)]
