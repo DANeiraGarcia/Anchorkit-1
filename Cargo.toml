@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "webhook-sdk"]
+members = [".", "webhook-sdk", "cli"]
 resolver = "2"
 
 [package]
