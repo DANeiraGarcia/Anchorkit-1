@@ -16,10 +16,13 @@ This repository currently implements the **on-chain Soroban contract** —
 attestation lifecycle, attestor allow-listing, admin control, pause/circuit
 breaker, and payload hashing — with a full unit test suite. It intentionally
 does **not** yet include the off-chain SDK layer (SEP-10 auth, SEP-6
-deposit/withdraw flows, rate limiting/retry helpers, anchor discovery), the
-CLI, the React/Storybook UI components, or the docs site that a complete
-toolkit would ship. Those are tracked as GitHub issues (see below) rather
-than stubbed out in-tree.
+deposit/withdraw flows, rate limiting/retry helpers), the React/Storybook UI
+components, or the docs site that a complete toolkit would ship. Those are
+tracked as GitHub issues (see below) rather than stubbed out in-tree.
+
+A CLI (`cli/`, see [`docs/cli.md`](docs/cli.md)) has begun landing
+alongside the contract, starting with `anchorkit discover` for anchor
+metadata/SEP-capability discovery; more subcommands are tracked as issues.
 
 ## Contract surface
 
@@ -118,15 +121,16 @@ full analysis and follow-up issue (#WIN-1).
 
 ## Documentation
 
+- [CLI](docs/cli.md) — `anchorkit` subcommands, including a sample `discover` session.
 - [Revocation notification design](docs/revocation-notification-design.md) — proposed payload and delivery semantics for notifying subscribers when an attestation should be revoked.
 
 ## Roadmap
 
 The gap between this ~50%-built core and a complete toolkit is tracked as
 GitHub issues, labeled by area and difficulty. Expect issues covering:
-off-chain SEP-10/SEP-6 flows, rate limiting and retry/backoff, anchor
-discovery and health scoring, attestation pagination and audit logging,
-replay-window protection, a CLI, UI components, and end-to-end docs.
+off-chain SEP-10/SEP-6 flows, rate limiting and retry/backoff, health
+scoring, attestation pagination and audit logging, replay-window
+protection, further CLI subcommands, UI components, and end-to-end docs.
 
 ## License
 
